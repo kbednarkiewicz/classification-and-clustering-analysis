@@ -1,0 +1,798 @@
+---
+title: "Porównanie zaawansowanych metod klasyfikacji
+i analizy skupień"
+author: |+
+        | Katarzyna Bednarkiewicz, Ewelina Dąbrowa  
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+    dev: cairo_pdf
+    fig_caption: yes
+    fig_width: 6.5 
+    fig_height: 5 
+    number_sections: true
+header-includes:
+   - \usepackage[OT4]{polski}
+   - \usepackage[utf8]{inputenc}
+   - \usepackage{graphicx}
+   - \usepackage{float}
+fontsize: 12pt 
+lang: pl
+---
+
+    
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, cache =TRUE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+    
+library(xtable) # do tworzenia tabel texowych w pdf
+library(arules) # zawiera funkcję discretize() do zadania 1
+library(e1071)  # zawiera funkcję compareMatchedClasses() do zadania 1
+library(rpart) # zawiera funkcję rpart() do zadania 1
+library(rpart.plot) # zawiera funkcję rpart.plot() do zadania 1
+library(ipred) # zawiera funkcję bagging() do zadania 1 
+library(adabag) # zawiera funkcję boosting() do zadania nr 1
+library(clValid) # zawiera funkcję clValid() do zadania 2
+library(cluster) # zawiera funkcję do zadania 2
+library(randomForest) # obsługa lasów losowych
+library(mclust) # do obliczenia wartości Adjusted Rand Index
+library(pheatmap) # do zbudowania mapy ciepła zgodności klas i klastrów
+```
+    
+
+# Zaawansowane metody klasyfikacji
+    
+## Rodziny klasyfikatorów/uczenie zespołowe (ang. ensemble learning).
+
+Zajmiemy się analizą zaawansowanych metod klasyfikacji na podstawie danych *Glass*. Rozpatrzymy dwa z algorytmów typu ensemble learning, tj. bagging oraz boosting w konstrukcji reguł klasyfikacyjnych oraz zbadamy ich dokładność w porównaniu z dokładnością klasyfikacji dla pojedynczego drzewa.
+Wczytujemy i dołączamy dane *Glass* z pakietu *mlbench*.
+```{r wczytanie_danych, echo = FALSE}
+# wczytanie danych
+library(mlbench)
+data(Glass)
+dane <- Glass
+
+# dołaczenie danych
+attach(dane)
+```
+
+Budujemy pojedyncze drzewo klasyfikacyjne.
+```{r pojedyncze_drzewo, echo = FALSE, fig.width = 7.75, fig.height = 6.5}
+# ustawiamy ziarno generatora
+set.seed(123)
+
+# budujemy drzewo klasyfikacyjne
+# tree <- rpart(Type~., data=Glass) #parametry domyślne
+# 
+# # wykres zbudowanego drzewa
+# par(mar = c(5, 1, 2, 1))
+# rpart.plot(tree, main="Drzewo klasyfikacyjne - dane Glass", cex=.35, clip.right.labs = FALSE, space = 1.5, tweak = 0.95, under = FALSE)
+# par(mar = c(5.1, 4.1, 4.1, 2.1))
+```
+Skonstruujemy teraz reguły klasyfikacyjne na bazie w.w. algorytmów i porównamy ich dokładność. Dla każdego z algorytmów przyjmiemy domyślnie liczbę replikacji wynoszącą 25.
+
+```{r bagging, echo = FALSE}
+# wybieramy parametry (minsplit i cp), dla których otrzymujemy drzewa o złożonej strukturze
+btree <- ipred::bagging(Type~., data=Glass, nbagg=25, minsplit=1, cp=0)
+# btree
+
+# Jak liczba replikacji B (parametr nbagg) wpływa na dokładność modelu?
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+mypredict <- function(object, newdata) predict(object, newdata, type = "class")
+
+# sprawdzenie dla jakiego parametru nbagg mamy największą dokładność modelu
+# bagging.error.rates <- sapply(B.vector, function(b)  {print(paste0('B=',b)); errorest(Type~., data=Glass, model=ipred::bagging, nbagg=b, estimator="632plus", est.para=control.errorest(nboot = 20), predict = mypredict)$error})
+# plot(B.vector, bagging.error.rates, xlab="B", main="Bagging: error rate vs. B", type="b")
+# grid()
+```
+
+
+```{r boosting, echo =  FALSE}
+# boosttree <- adabag::boosting(Type~., data=Glass, mfinal=25, minsplit=1, cp=0)
+
+# ranking ważności cech (ang. relative importance)
+# barplot(boosttree$importance, main="Relative importance of variables")
+# 
+# boost.pred <- predict(boosttree, Glass)
+# is.factor(boost.pred$class) # uwaga: prognozowane klasy nie są wartościami typu factor
+
+# sprawdzenie dla jakiego parametru nbagg mamy największą dokładność modelu
+mypredict.boosting <- function(object, newdata) {
+  preds <- predict(object, newdata)
+  factor(preds$class, levels = levels(Glass$Type))
+}
+#mypredict.boosting <- function(object, newdata)  as.factor(predict(object, newdata=newdata)$class) 
+
+# boosting.error.rates <- sapply(B.vector, function(b)  {print(paste0('B=',b)); errorest(Type~., data=Glass, model=adabag::boosting, mfinal=b, estimator="632plus", est.para=control.errorest(nboot = 20), predict = mypredict.boosting)$error})
+# plot(B.vector, boosting.error.rates, xlab="B", main="Boosting: error rate vs. B", type="b")
+# grid()
+```
+
+
+```{r dokladnosc, echo = FALSE, results='asis'}
+error.tree         <- (errorest(Type~., data=Glass, model=rpart, predict=mypredict,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20)))
+error.bagging      <- (errorest(Type~., data=Glass, model=ipred::bagging,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20)))
+error.boosting     <- (errorest(Type~., data=Glass, model=adabag::boosting, predict=mypredict.boosting,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20)))
+
+bl_tree <- error.tree$error
+bl_bagging <- error.bagging$error
+bl_boosting <- error.boosting$error
+
+# Względna redukcja błędu klasyfikacji (w %)
+redu_bagging <- (bl_tree - bl_bagging)/bl_tree*100        # bagging vs. single tree
+redu_boosting <- (bl_tree - bl_boosting)/bl_tree*100       # boosting vs. single tree
+
+
+# stworzenie ramki danych
+df_bledy_klasyfikacji <- data.frame(row.names = c("Błąd klasyfikacyjny", "Względna redukcja błędu (w %)"),
+                                    "Pojedyncze drzewo" = c(bl_tree, 0),
+                                    "Bagging" = c(bl_bagging, redu_bagging),
+                                    "Boosting" = c(bl_boosting, redu_boosting), check.names = FALSE)
+
+df_bledy_klasyfikacji <- t(df_bledy_klasyfikacji)
+
+# stworzenie tabeli
+tabela_bledow <- xtable(df_bledy_klasyfikacji,
+                        caption = "Tabela zawierająca błędy klasyfikacyjne dla różnych algorytmów klasyfikacji oraz wyrażoną w procentach względną redukcję błędu danego algorytmu względem pojedynczego drzewa",
+                        label = "tab.bl_klas",
+                        digits=3)
+print(tabela_bledow, type="latex", table.placement = "H", comment = FALSE, include.rownames = TRUE)
+```
+
+Wyniki przedstawione w Tabeli \ref{tab.bl_klas} sugerują, że w przypadku obu badanych algorytmów otrzymujemy istotną redukcję błędu klasyfikacyjnego względem klasyfikatora bazowego. Dla bagging błąd wynosi `r round(bl_bagging, 3)`, a jego względna redukcja jest na poziomie `r round(redu_bagging, 3)`%. Dla boostingu otrzymujemy błąd równy `r round(bl_boosting, 3)`, a jego względna redukcja błędu wynosi `r round(redu_boosting, 3)`%. Możemy zaobserwować, że występują różnice w dokładności klasyfikacji pomiędzy baggingiem a boostingiem, mianowicie boosting wykazał się większą dokładnością klasyfikacji, jednak nie są one istotnie duże. Prawdopodobnie dobierając bardziej optymalne parametry dla obu algorytmów, moglibyśmy zaobserwować wzrost owej różnicy.
+
+\vspace{0.3cm}
+
+
+## Metoda wektorów nośnych (SVM)
+
+Wykorzystując algorytm SVM, budujemy klasyfikatory dla różnych funkcji jądrowych (jądro liniowe, wielomianowe i radialne).
+Zbadamy, jak wybór parametru kosztu C wpływa na dokładność klasyfikacji dla jądra liniowego.
+
+```{r svm, echo=FALSE, results='asis'}
+n <- nrow(dane)
+learn.ind    <- sample(1:n, 2/3*n)
+training.set <- dane[learn.ind,]
+test.set     <- dane[-learn.ind,]
+
+
+svm.linear.C0.1 <- svm(Type~., data=training.set, kernel="linear", cost=.1)
+#summary(svm.linear.C0.1)
+
+svm.linear.C1 <- svm(Type~., data=training.set, kernel="linear", cost=1)
+#summary(svm.linear.C1)
+
+svm.linear.C10 <- svm(Type~., data=training.set, kernel="linear", cost=10)
+#summary(svm.linear.C10)
+
+# konstrukcja prognoz i ocena ich dokładności
+real.labels <- test.set$Type
+n.test <- length(real.labels)
+
+pred.svm.lin.c1 <- predict(svm.linear.C1, newdata=test.set)
+pred.svm.lin.c0.1 <- predict(svm.linear.C0.1, newdata=test.set)
+pred.svm.lin.c10 <- predict(svm.linear.C10, newdata=test.set)
+
+acc.svm.lin.c1   <- sum(diag(table(pred.svm.lin.c1,real.labels)))/n.test
+acc.svm.lin.c0.1   <- sum(diag(table(pred.svm.lin.c0.1, real.labels)))/n.test
+acc.svm.lin.c10   <- sum(diag(table(pred.svm.lin.c10, real.labels)))/n.test
+
+tabela.porownanie.c <- data.frame(C=c(0.1, 1, 10), 
+                                  "Dokładność"=round(c(acc.svm.lin.c0.1,
+                                                     acc.svm.lin.c1,
+                                                     acc.svm.lin.c10),3) )
+# stworzenie tabeli
+tabela1 <- xtable(tabela.porownanie.c, 
+                    caption = "Porównanie wpływu parametru C",
+                    label = "tab.svm.1")
+print(tabela1, type="latex", table.placement = "H", comment = FALSE, include.rownames = FALSE)
+
+```
+
+W Tabeli \ref{tab.svm.1} widzimy, że najwyższą skuteczność dla modelu z liniową funkcją jądrową osiągamy dla parametru $C = 1.00$ (dokładność 0.69). Zbyt niska ($C = 0.10$) i zbyt wysoka ($C = 10.00$) wartość tego parametru prowadzi do pogorszenia wyników klasyfikacji.
+
+```{r tuning.jadro.lin, echo=FALSE, fig.cap="Wpływ parametru C na błąd klasyfikacji dla jądra liniowego \\label{fig.svm.c}"}
+C.range <- 2^((-4):4)
+
+linear.tune <- tune(svm, Type~., data=training.set,
+                    kernel="linear", ranges=list(cost=C.range))
+#linear.tune
+plot(linear.tune, xlab = "koszt", ylab="błąd klasyfikacji")
+```
+Na Rysunku \ref{fig.svm.c} widzimy, że dla niskich wartości $C$ model z wykorzystaniem liniowej funkcji jądrowej daje najwyższy błąd, następnie następuje gwałtowny spadek. W przedziale wartości $C$ od 1 do 4 błąd stabilizuje się na dość stabilnym poziomie (ok. 0.37), zaś minimum osiąga dla parametru $C = 8$ (błąd ok. 0.35). Dalsze zwiększanie kosztu (powyżej 10) skutkuje ponownym, nieznacznym wzrostem błędu, co sugeruje początek zjawiska przetrenowania (overfittingu).
+
+Teraz porównamy wpływ wyboru funkcji jądrowej na skuteczność metody.
+
+```{r svm.funkcje.jadrowe, echo=FALSE, results='asis'}
+
+svm.poly2  <- svm(Type~., data=training.set, kernel="polynomial", degree = 2)
+svm.poly4  <- svm(Type~., data=training.set, kernel="polynomial", degree = 4)
+svm.radial <- svm(Type~., data=training.set, kernel="radial")
+svm.radial.gamma0.1 <- svm(Type~., data=training.set, kernel="radial", gamma=0.1)
+svm.radial.gamma1 <- svm(Type~., data=training.set, kernel="radial", gamma=1)
+
+# prognozy i porównanie dokładności
+pred.svm.poly2  <- predict(svm.poly2, newdata=test.set)
+pred.svm.poly4  <- predict(svm.poly4, newdata=test.set)
+pred.svm.radial <- predict(svm.radial, newdata=test.set)
+pred.svm.radial.gamma0.1  <- predict(svm.radial.gamma0.1, newdata=test.set)
+pred.svm.radial.gamma1 <- predict(svm.radial.gamma1, newdata=test.set)
+
+
+acc.svm.lin.c10    <- sum(diag(table(pred.svm.lin.c10, real.labels)))/n.test
+acc.svm.poly2  <- sum(diag(table(pred.svm.poly2, real.labels)))/n.test
+acc.svm.poly4  <- sum(diag(table(pred.svm.poly4, real.labels)))/n.test
+acc.svm.radial <- sum(diag(table(pred.svm.radial, real.labels)))/n.test
+acc.svm.radial.gamma0.1 <- sum(diag(table(pred.svm.radial.gamma0.1, real.labels)))/n.test
+acc.svm.radial.gamma1 <- sum(diag(table(pred.svm.radial.gamma1, real.labels)))/n.test
+
+wyniki <- data.frame("Jądro"=c("Liniowe (C=10)", "Wielomianowe (C=1, d=2)", "Wielomianowe (C=1, d=4)", "Radialne (C=1",
+                             "Radialne (C=1, gamma=0.1)", "Radialne (C=1, gamma=1)"),
+  "Dokładność" = round(c(acc.svm.lin.c10, acc.svm.poly2, acc.svm.poly4, acc.svm.radial,
+                       acc.svm.radial.gamma0.1, acc.svm.radial.gamma1), 3))
+
+tabela2 <- xtable(wyniki, caption = "Porównanie funkcji jądrowych SVM", label = "tab.svm.2")
+print(tabela2, type = "latex", table.placement = "H", comment = FALSE, include.rownames = FALSE)
+```
+
+Na podstawie wyników przedstawionych w Tabeli \ref{tab.svm.2} widzimy, że najwyższą skuteczność osiągamy dla jądra radialnego z domyślnymi parametrami, gdzie dokładność wynosi 0.76. Jądro liniowe ($C=10$) oraz wielomianowe drugiego stopnia ($d=2$) charakteryzują się gorszą dokładnością (odpowiednio 0.64 i 0.65). Najniższe wyniki osiąga jądro wielomianowe, przy czym zwiększenie stopnia wielomianu z $d=2$ do $d=4$ jeszcze bardziej zmniejszyło dokładność klasyfikacji - aż do poziomu 0.50.
+
+Teraz dla jądra radialnego spróbujemy dobrać optymalne parametry $\gamma$ i C. 
+
+```{r tuning.jadro.gauss, echo=FALSE, fig.cap="Wpływ parametru gamma oraz C na błąd klasyfikacji \\label{fig.svm.gamma.c}"}
+# Jądro gaussowskie (optymalizujemy C i gamma)
+gamma.range <- 2^((-8):4)
+radial.tune <- tune(svm, Type~., data=training.set,
+                    kernel="radial",
+                    ranges=list(cost=C.range, gamma=gamma.range))
+
+#print(radial.tune)
+#plot(radial.tune, transform.x=log, transform.y=log )
+plot(radial.tune, transform.x=log, transform.y=log, color.palette = topo.colors, xlab="koszt (skala log)", ylab="gamma (skala log)")
+#plot(radial.tune, type="perspective")
+
+
+# Dopasowujemy końcowy model dla optymalnych parametrów
+
+C.best <- radial.tune$best.parameters[["cost"]]
+gamma.best <- radial.tune$best.parameters[["gamma"]]
+
+svm.radial.tuned <- svm(Type~.,
+                        data=training.set, kernel="radial",
+                        cost=C.best, gamma=gamma.best)
+#summary(svm.radial.tuned)
+
+# Prognozowanie na bazie optymalnego modelu
+
+pred.svm.radial.tuned <- predict(svm.radial.tuned, newdata=test.set)
+acc.svm.radial.tuned <- sum(diag(table(pred.svm.radial.tuned, real.labels)))/n.test
+
+```
+
+Na Rysunku \ref{fig.svm.gamma.c} widzimy jak dobór parametrów $C$ oraz gamma wpływa na błąd klasyfikacji. Dla niskich wartości $C$ błąd jest bardzo duży, jego zwiększanie zdecydowanie zmniejsza błąd klasyfikacji, o ile dobór parametru gamma będzie opytmalny. Zbyt wysokie (ponad 2 w skali log) lub zbyt niskie gamma powodują, że błąd będzie wysoki.
+Najlepszą skuteczność modelu osiągamy zatem dla wartości $C$ z przedziału od około 1 do 3 (w skali log) (ok. 3 do 20 w skali rzeczywistej), a $\gamma$ w okolicach od -3 do -1 (w skali log) (od ok. 0.05 do 0.37 w skali rzeczywistej).
+
+W wyniku strojenia wyznaczyliśmy optymalne wartości parametrów: C=`r C.best`, $\gamma$=`r gamma.best`. Model z "dostrojonymi" parametrami osiągnął skuteczność `r round(acc.svm.radial.tuned,3)`, podczas gdy z domyślnymi parametrami dawał skuteczność równą `r round(acc.svm.radial,3)`. Optymalizacja parametrów sprawiła, że dokładność klasyfikacji spadła, lecz uzyskaliśmy model o lepszych właściwościach generalizujących i mniejszej podatności na overfitting.
+
+\vspace{0.3cm}
+
+## Porównanie skuteczności metod
+```{r boost_test, echo=FALSE}
+boost.model <- adabag::boosting(
+  Type~.,
+  data=training.set,
+  mfinal=25,
+  minsplit=1,
+  cp=0
+)
+
+pred.boost.test <- predict(boost.model, newdata=test.set)$class
+
+pred.boost.test <- factor(
+  pred.boost.test,
+  levels=levels(test.set$Type)
+)
+
+acc.boost.test <- sum(diag(table(
+  pred.boost.test,
+  test.set$Type
+)))/nrow(test.set)
+```
+
+```{r bag_test, echo=FALSE}
+pred.bag.test <- predict(
+  btree,
+  newdata=test.set,
+  type="class"
+)
+
+acc.bag.test <- sum(diag(table(
+  pred.bag.test,
+  test.set$Type
+)))/nrow(test.set)
+```
+
+
+```{r wielka_tabela_dokladnosci_porowananie, echo = FALSE, results = 'asis'}
+# model lasu losowego (Random Forest)
+rf.model <- randomForest(Type~., data=training.set, ntree=500)
+pred.rf.test <- predict(rf.model, newdata=test.set)
+acc.rf.test <- sum(diag(table(pred.rf.test, real.labels)))/n.test
+
+# dokładności treningowe dla modeli
+pred.bag.train <- predict(btree, newdata=training.set, type="class")
+acc.bag.train <- sum(diag(table(pred.bag.train, training.set$Type)))/nrow(training.set)
+
+# boosting
+pred.boost.train <- predict(adabag::boosting(Type~., data=training.set, mfinal=25, minsplit=1, cp=0), newdata=training.set)
+acc.boost.train <- sum(diag(table(pred.boost.train$class, training.set$Type)))/nrow(training.set)
+
+# SVM
+acc.svm.lin.train <- sum(diag(table(predict(svm.linear.C10, newdata=training.set), training.set$Type)))/nrow(training.set)
+acc.svm.poly.train <- sum(diag(table(predict(svm.poly4, newdata=training.set), training.set$Type)))/nrow(training.set)
+acc.svm.rad.opt.train <- sum(diag(table(predict(svm.radial.gamma0.1, newdata=training.set), training.set$Type)))/nrow(training.set)
+acc.svm.rad.tuned.train <- sum(diag(table(predict(svm.radial.tuned, newdata=training.set), training.set$Type)))/nrow(training.set)
+acc.rf.train <- sum(diag(table(predict(rf.model, newdata=training.set), training.set$Type)))/nrow(training.set)
+
+
+# tworzenie ramki danych
+df_porownanie <- data.frame(
+  "Metoda" = c("Random Forest", "Bagging", "Boosting", "SVM", "SVM", "SVM", "SVM"),
+  "Typ jądra" = c("-", "-", "-", "Liniowe", "Wielomianowe", "Radialne", "Radialne"),
+  "Dobrane parametry" = c("ntree = 500", "nbagg = 25", "mfinal = 25", "C = 10", "d = 4", "gamma = 0.1, C = 1.00", "gamma = 0.5, C = 8"),
+  "Dokładność (Trening)" = round(c(acc.rf.train, acc.bag.train, acc.boost.train, acc.svm.lin.train, acc.svm.poly.train, acc.svm.rad.opt.train, acc.svm.rad.tuned.train), 3),
+  "Dokładność (Test)" = round(c(
+ acc.rf.test,
+ acc.bag.test,
+ acc.boost.test,
+ acc.svm.lin.c10,
+ acc.svm.poly4,
+ acc.svm.radial.gamma0.1,
+ acc.svm.radial.tuned
+),3), 
+  check.names = FALSE
+)
+
+# tworzenie tabeli
+tabela_porownawcza <- xtable(df_porownanie,
+                             caption = "Tabela porównująca dokładność klasyfikacji dla różnych algorytmów na zbiorze treningowym oraz testowym",
+                             label = "tab.dokl_klas_por",
+                             digits=3)
+print(tabela_porownawcza, type="latex", table.placement = "H", comment = FALSE, include.rownames = FALSE)
+```
+Tabela nr \ref{tab.dokl_klas_por} prezentuje porównanie dokładności dla rozważanych algorytmów na zbiorze treningowym oraz testowym. Uwzględniliśmy w niej różne wartości parametrów, w celu ustalenia, która z rozważanych metod wykazała się najlepszą skutecznością. 
+Wynika z niej, że zdecydowanie najwyższą dokładnością na zbiorze testowym charakteryzuje się metoda Bagging, która osiągnęła wynik 0.986, wykazując przy tym doskonałą stabilność i brak tendencji do przeuczenia (dokładność na zbiorze treningowym również wyniosła 0.986). Drugim pod względem skuteczności algorytmem okazał się Random Forest z dokładnością testową na poziomie 0.778, choć w jego przypadku widoczne jest pełne dopasowanie do danych treningowych (1.000). Algorytm Boosting uzyskał na zbiorze testowym słabszy wynik (0.694). W przypadku algorytmu SVM skuteczność była silnie uzależniona od doboru jądra oraz parametrów. Najlepsze wyniki w tej grupie uzyskało jądro radialne przy parametrach $\gamma = 0.1$ oraz $C = 1.00$, osiągając dokładność testową równą 0.750 (co ciekawe, wyższą niż na zbiorze treningowym: 0.732). Zwiększenie parametrów dla jądra radialnego ($\gamma = 0.5, C = 8$) doprowadziło do przeuczenia modelu - mimo bardzo wysokiej dokładności treningowej (0.965), skuteczność testowa spadła do 0.694. Pozostałe warianty SVM poradziły sobie wyraźnie słabiej: jądro liniowe ($C = 10$) uzyskało wynik testowy 0.639, a najniższą skutecznością spośród wszystkich badanych metod wykazało się jądro wielomianowe ($d = 4$), osiągając wynik zaledwie 0.500.
+\vspace{1cm}
+
+```{r macierz_pomylek_rf, echo=FALSE, results='asis'}
+mac.pomylek.rf <- confusionMatrix(
+  pred.rf.test,
+  test.set$Type
+)
+macierz.pom.rf <- xtable(mac.pomylek.rf$table, caption = "Macierz pomyłek dla Random Forest", label="mac.rf")
+print(macierz.pom.rf, type="latex", table.placement = "H", comment = FALSE, include.rownames = TRUE)
+```
+W Tabeli \ref{mac.rf} przedstawiono macierz pomyłek dla Random Forest na zbiorze testowym.
+Model Random Forest osiągnął dokładność klasyfikacji równą `r round(acc.rf.test,3)`.
+
+
+
+```{r macierz_pomylek_boost, echo=FALSE, results='asis'}
+
+mac.pomylek.boost <- confusionMatrix(
+  pred.boost.test,
+  test.set$Type
+)
+
+macierz.boost <- xtable(
+  mac.pomylek.boost$table,
+  caption="Macierz pomyłek dla Boosting",
+  label="mac.boost"
+)
+
+print(
+  macierz.boost,
+  type="latex",
+  table.placement="H",
+  comment=FALSE,
+  include.rownames=TRUE
+)
+```
+W Tabeli \ref{mac.boost} przedstawiono macierz pomyłek dla metody boosting na zbiorze testowym.
+Model osiągnął dokładność klasyfikacji równą `r round(mac.pomylek.boost$overall["Accuracy"],3)`.
+
+
+
+
+```{r macierz_pomylek_bagging, echo=FALSE, results='asis'}
+
+
+mac.pomylek.bag <- confusionMatrix(
+  pred.bag.test,
+  test.set$Type
+)
+
+macierz.bag <- xtable(
+  mac.pomylek.bag$table,
+  caption="Macierz pomyłek dla Bagging",
+  label="mac.bag"
+)
+
+print(
+  macierz.bag,
+  type="latex",
+  table.placement="H",
+  comment=FALSE,
+  include.rownames=TRUE
+)
+```
+W Tabeli \ref{mac.bag} przedstawiono macierz pomyłek dla metody bagging na zbiorze testowym.
+Model osiągnął dokładność klasyfikacji równą `r round(mac.pomylek.bag$overall["Accuracy"],3)`.
+
+Na podstawie przedstawionych macierzy pomyłek można zauważyć, że najlepsze wyniki osiągnął model oparty na metodzie bagging. Spoglądając na macierz pomyłek, model ten niemal bezbłędnie sklasyfikował próbki ze wszystkich klas. Algorytm Random Forest (dokładność 0.75) poradził sobie wyraźnie lepiej niż klasyczny Boosting (dokładność 0.625). Dla Random Forest i Boosting największe trudności sprawiło poprawne rozróżnienie klasy 1 oraz klasy 2 - często dochodziło między nimi do wzajemnych pomyłek. Model Boosting miał ogromny problem z klasą 3 - żadna z próbek nie została sklasyfikowana poprawnie. Obie metody (Random Forest i Boosting) stosunkowo dobrze poradziły sobie z rozpoznawaniem klasy 7.
+
+# Analiza skupień – algorytmy grupujące i hierarchiczne.
+    
+## Wybór i przygotowanie danych.
+
+Do analizy ponownie wybieramy dane *Glass*, które pochodzą z pakietu *mlbench*. Zbiór tych danych zawiera informacje o składzie chemicznym różnych rodzajów szkła. Dane te zostały uzyskane na podstawie kryminalistycznych badań powypadkowych. Został on udostępniony przez Friedricha Leischa pod koniec lat 90. XX wieku.
+Losujemy podzbiór zawierający 200 rekordów oraz usuwamy zmienną grupującą *Type*.
+W przypadku tych danych przed wyznaczeniem macierzy odległości/odmienności konieczne będzie zastosowanie standaryzacji.
+
+
+```{r dane.2, echo=FALSE, fig.cap="Podział na skupiska metodą k-means"}
+library(mlbench)
+data(Glass)
+dane <- Glass
+n <- nrow(dane)
+ind <- sample(1:n, 200)
+
+dane_subset <- dane[ind, ]
+etykietki.rzeczywiste <- dane_subset$Type
+dane_analiza <- dane_subset[, -ncol(dane_subset)]
+standaryzowane <- scale(dane_analiza)
+
+```
+\vspace{0.3cm}
+
+## Wizualizacja wyników grupowania.
+
+Przeprowadzamy podział na skupienia algorytmem k-średnich (k-means), przyjmując liczbę skupień $K$ równą rzeczywistej liczbie klas występujących w danych, co pozwala porównać uzyskany podział z rzeczywistą strukturą klas.
+ 
+```{r k-means, echo=FALSE, fig.cap="Podział na skupiska metodą k-means \\label{fig.kmeans}"}
+K <- length(unique(etykietki.rzeczywiste))
+kmeans.k <- kmeans(standaryzowane, centers=K,iter.max=10, nstart=10)
+etykietki.kmeans <- kmeans.k$cluster
+
+# Wizualizacja na bazie PCA (analiza składowych głównych)
+library(factoextra)
+fviz_cluster(kmeans.k, standaryzowane)
+#fviz_cluster(kmeans.k, standaryzowane, ellipse.type="euclid", repel = TRUE)
+```
+
+Na Rysunku \ref{fig.kmeans} przedstawiono podział obiektów na skupiska uzyskany za pomocą algorytmu k-means. Do wizualizacji wykorzystujemy metodę PCA. Możemy zauważyć, że skupisko dla 6 klastra jest wyraźnie odseparowane od reszty. Skupisko 4, pomimo częściowego nakładania się z klastrem 2, również jest dość dobrze oddzielone. Klaster nr 3 zaś na wykresie tworzy odstającą od reszty kropkę po lewej stronie. Skupisko 5 częściowo pokrywa się z klastrem 1. Pozostałe skupiska (1, 2) natomiast dość mocno nakładają się na siebie.
+
+
+Teraz przyjrzyjmy się dendrogramom dla analizowanych podejść hierarchicznych.
+```{r agnes1, echo=FALSE, fig.cap="Dendrogram dla metody Average linkage \\label{fig.dendrogramy1}", fig.width=15, fig.height=8, out.width='100%'}
+
+library(cluster)
+glass.diss <- daisy(standaryzowane)
+mac.niepodob <- as.matrix(glass.diss)
+
+### Trzy metody łączenia klastrów (ang. linkage method)
+agnes.avg <- agnes(glass.diss, diss = TRUE, method = "average")
+agn.avg <- cutree(agnes.avg, k = K)
+
+agnes.single <- agnes(glass.diss, diss = TRUE, method = "single")
+agn.sing <- cutree(agnes.single, k = K)
+
+agnes.complete <- agnes(glass.diss, diss = TRUE, method = "complete")
+agn.com <- cutree(agnes.complete, k = K)
+
+### Wizualizacja (dendrogram, clustering tree)
+par(mar = c(1, 2, 2, 2))
+plot(agnes.avg, which.plots = 2, main = "Average linkage", cex=0.5)
+```
+
+Na Rysunku \ref{fig.dendrogramy1} widzimy dendrogram dla metody Average linkage. Drzewo grupuje obiekty ze zbioru danych na skupiska, lecz wydziela kilka odseparowanych pojedynczych gałęzi. Po prawej stronie wykresu są widoczne obserwacje odstające.
+
+
+```{r agnes2, echo=FALSE, fig.cap="Dendrogram dla metody Single linkage \\label{fig.dendrogramy2}", fig.width=15, fig.height=8, out.width='100%'}
+par(mar = c(1, 2, 2, 2))
+plot(agnes.single, which.plots = 2, main = "Single linkage", cex=0.5)
+```
+Na Rysunku \ref{fig.dendrogramy2} widzimy dendrogram dla metody Single linkage.
+Metoda ta słabo radzi sobie z wydzieleniem odseparowanych skupień i wyraźnie widoczne są pojedyncze obserwacje odstające. Dendrogram powstały dla tej metody jest najniższy.
+
+```{r agnes3, echo=FALSE, fig.cap="Dendrogram dla metody Complete linkage \\label{fig.dendrogramy3}", fig.width=15, fig.height=8, out.width='100%'}
+par(mar = c(1, 2, 2, 2))
+plot(agnes.complete, which.plots = 2, main = "Complete linkage", cex=0.5)
+```
+
+Na Rysunku \ref{fig.dendrogramy3} przedstawiono dendrogram dla metody Complete linkage. Ta metoda tworzy najwyraźniejsze, zwarte odeparowane grupy, jednak po prawej stronie wykresu nadal widzimy obserwacje odstające. Dendrogram dla tej metody jest najwyższy w porównaniu do innych analizowanych podejść.
+
+\vspace{0.3cm}
+
+
+## Ocena jakości grupowania. Wybór optymalnej liczby skupień i porównanie metod.
+
+
+```{r wskazniki_wewnetrzne, echo = FALSE, results = 'asis', fig.cap = "Wykres przedstawiający średnią wartość indeksu Silhouette dla algorytmów Pam i Agnes dla różnej liczby skupisk \\label{fig.wew}"}
+# wskazujemy algorytmy analizy skupień, które będą porównane
+metody <- c("pam", "agnes")
+
+# zakres dla liczby skupień
+K.zakres <- 2:6
+
+internal.validation <- clValid(standaryzowane, nClust=K.zakres, clMethods=metody, validation="internal")
+
+# wyciągamy macierz miar i wybieramy tylko Silhouette
+tabela_silhouette <- measures(internal.validation)["Silhouette", , ]
+# print(tabela_silhouette)
+
+# wyciągamy optymalne wyniki dla Silhouette
+optymalne <- optimalScores(internal.validation)
+najlepsze <- optymalne[rownames(optymalne) == "Silhouette", ]
+najlepsze_k <- najlepsze$Clusters
+
+# tworzenie ramki danych
+df_silhouette <- data.frame(K = rownames(tabela_silhouette),
+                            tabela_silhouette,
+                            row.names = NULL)
+
+# tworzenie tabeli
+wew <- xtable(df_silhouette, 
+              caption = "Średnie wartości indeksu Silhouette dla różnej ilości skupisk dla algorytmów Pam i Agnes",
+              label = "tab.wew",
+              digits=3)
+print(wew, type="latex", table.placement = "H", comment = FALSE, include.rownames = FALSE)
+
+# wykres
+plot(internal.validation, measures = "Silhouette", legend = FALSE, lwd=2, main = "Średnia wartość indeksu Silhouette dla różnej liczby skupień")
+legend("bottomleft", clusterMethods(internal.validation), col=1:2, lty=1:2, pch=paste(1:2))
+```
+
+Tabela \ref{tab.wew} oraz Rysunek \ref{fig.wew} przedstawiają średnią wartość indeksu Silhouette dla różnej ilości skupisk dla algorytmów Pam i Agnes. Wynika z nich, że lepszym podziałem na klastry pod względem zwartości i ich separacji przestrzennej charakteryzuje się algorytm Agnes (wyższe wartości wskaźnika). Dla Pam możemy zauważyć, że od $K = 3$ wartości wskaźnika zaczynają rosnąć, podczas gdy dla Agnes wartości wraz ze zwrostem liczby skupisk maleją.
+Najwyższą wartość wynoszącą `r round(najlepsze$Score, 3)` wskaźnik osiąga dla $K = `r najlepsze_k`$ dla algorytmu Agnes.
+
+
+```{r wskazniki_zewnetrzne, echo = FALSE, results = 'asis', fig.cap = "Wykres przedstawiający wartość wskaźnika zewnętrznego dla algorytmów Pam i Agnes dla różnej liczby klastrów \\label{fig.zew}"}
+wyniki_zew <- data.frame()
+
+# funkcja licząca zgodność
+zgodnosc <- function(cluster, klasa) {
+  tab <- table(cluster, klasa)
+  sum(apply(tab, 1, max)) / sum(tab)
+}
+
+for (K in K.zakres) {
+  
+  pam_wynik <- pam(standaryzowane, k = K)
+  pam_cl <- pam_wynik$clustering
+  
+  pam_acc <- zgodnosc(pam_cl, etykietki.rzeczywiste)
+  
+  wyniki_zew <- rbind(wyniki_zew, data.frame(
+    metoda = "PAM",
+    K = K,
+    zgodność = pam_acc
+  ))
+  
+  
+  agnes_wynik <- agnes(standaryzowane)
+  agnes_cl <- cutree(as.hclust(agnes_wynik), k = K)
+  
+  agnes_acc <- zgodnosc(agnes_cl, etykietki.rzeczywiste)
+  
+  wyniki_zew <- rbind(wyniki_zew, data.frame(
+    metoda = "AGNES",
+    K = K,
+    zgodność = agnes_acc
+  ))
+}
+
+# wyniki_zew
+
+naj <-  wyniki_zew[which.max(wyniki_zew$zgodność), ]
+naj_z <- naj$zgodność
+naj_k <- naj$K
+
+# tworzenie tabeli 
+zew <- xtable(wyniki_zew, 
+              caption = "Wskaźniki zewnętrzne dla różnej ilości skupisk dla algorytmów Pam i Agnes",
+              label = "tab.zew",
+              digits=3)
+print(zew, type="latex", table.placement = "H", comment = FALSE, include.rownames = FALSE)
+
+# wykresik
+pam <- subset(wyniki_zew, metoda == "PAM")
+agnes <- subset(wyniki_zew, metoda == "AGNES")
+
+matplot(pam$K,
+        cbind(pam$zgodność, agnes$zgodność),
+        type = "b",
+        lty = 1:2,
+        pch = 1:2,
+        lwd = 2,
+        xlab = "Liczba skupień",
+        ylab = "Zgodność z klasami",
+        main = "Wartość wskaźnika zewnętrznego dla różnej liczby skupień")
+
+legend("topleft",
+       legend = c("PAM", "AGNES"),
+       col = 1:2,
+       lty = 1:2,
+       pch = 1:2,
+       lwd = 2)
+```
+
+
+Tabela \ref{tab.zew} oraz Rysunek \ref{fig.zew} prezentują wartości wskaźnika zgodności przyporządkowania obiektów do odpowiednich klastrów dla algorytmów Pam i Agnes dla różnej liczby skupisk. Możemy z nich wywnioskować, że na ogół z przyporządkowywaniem lepiej radzi sobie algorytm Pam. Dla dowolnej liczby skupisk cechuje się on znacznie wyższą wartością tego wskaźnika niż algorytm Agnes. Dla Agnes wartości wskaźnika nieznacznie rosną wraz ze wzrostem liczby klastrów, zaś dla Pam odnotowujemy znacznie bardziej zauważalny wzrost, który osiąga kulminacyjną wartość `r naj_z` dla liczby skupisk $K = `r naj_k`$
+
+
+Na podstawie otrzymanych wyników dla wskaźnika Silhouette oraz wskaźnika zgodności jest wręcz niemożliwe, aby zdecydować, który algorytm poradził sobie lepiej. Według wskaźnika Silhouette lepiej poradził sobie algorytm Agnes, ale dla wskaźnika zgodności jest przeciwnie.
+W związku z tym nie można jednoznacznie wskazać lepszej metody wyłącznie na podstawie tych dwóch miar. Aby dokonać bardziej wiarygodnej oceny, należałoby uwzględnić większą liczbę wskaźników jakości grupowania.
+
+\vspace{0.3cm}
+
+## Interpretacja wyników grupowania – charakterystyki skupień.
+
+W celu interpretacji powstałych klastrów, przeanalizujemy profile skupień uzyskane za pomocą algorytmu PAM dla rzeczywistej liczby skupień ($K = 6$). Poniższa tabela przedstawia średnie wartości poszczególnych składników chemicznych w wyodrębnionych skupiskach, co pozwala scharakteryzować specyfikę każdego z nich.
+
+```{r interpretacja_klasy_realne, echo=FALSE, results='asis'}
+
+# model PAM dla K=6
+pam.optymalny <- pam(standaryzowane, k = 6)
+
+# oryginalne dane chemiczne (bez standaryzacji)
+dane_realne <- dane[ind, -ncol(dane)]
+
+# dodanie numeru klastra
+dane_realne$skupisko <- as.factor(pam.optymalny$clustering)
+
+# średnie wartości rzeczywistych cech dla każdego klastra
+profile_skupien_realne <- aggregate(. ~ skupisko,
+                                    data = dane_realne,
+                                    FUN = mean)
+
+# tabela 
+tabela_profili_realne <- xtable(
+  profile_skupien_realne,
+  caption = "Średnie rzeczywiste wartości składników chemicznych szkła w poszczególnych skupiskach dla algorytmu PAM (K=6)",
+  label = "tab.profile.real",
+  digits = 3
+)
+
+print(tabela_profili_realne,
+      type = "latex",
+      table.placement = "H",
+      comment = FALSE,
+      include.rownames = FALSE)
+```
+
+
+Tabela \ref{tab.profile.real} przedstawia profile chemiczne skupień uzyskanych metodą PAM dla $K=6$. Przedstawione wartości odpowiadają rzeczywistym średnim zawartościom składników chemicznych szkła, co pozwala na łatwiejszą interpretację charakterystyki poszczególnych grup.
+
+Największe różnice pomiędzy skupieniami obserwowane są dla zawartości Na, Mg, Al oraz Ca. Szczególnie interesujące są skupiska 4 i 6, które wyróżniają się odmiennym składem chemicznym. Skupisko 4 charakteryzuje się wysoką zawartością wapnia oraz podwyższonym współczynnikiem załamania światła, natomiast skupisko 6 podwyższonym poziomem potasu i glinu. Pozostałe skupiska wykazują bardziej zbliżone profile chemiczne, co wskazuje na częściowe nakładanie się grup w przestrzeni cech.
+
+## Analiza zgodności klastrów PAM z rzeczywistymi klasami szkła
+
+```{r klasy.rzecz, fig.cap = "Porównanie klas rzeczywistych i klastrów \\label{pam.klasy}", echo=FALSE}
+tab_pam <- table(
+  Klasa = etykietki.rzeczywiste,
+  Klaster = pam.optymalny$clustering)
+
+
+ari_pam <- adjustedRandIndex(
+  pam.optymalny$clustering,
+  etykietki.rzeczywiste)
+
+pheatmap(
+  tab_pam,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  main="Macierz zgodności klas rzeczywistych i klastrów PAM")
+```
+Na Rysunku \ref{pam.klasy} przedstawiono mapę ciepła obrazującą zgodność pomiędzy rzeczywistymi klasami szkła a klastrami uzyskanymi metodą PAM. Widoczna jest wysoka zgodność dla klasy 7, która została w większości przyporządkowana do jednego klastra. Może to wskazywać, że obiekty tej klasy charakteryzują się profilem chemicznym bardziej odmiennym od pozostałych grup. Jednocześnie można zauważyć częściowe nakładanie się klas 1 i 2, które zostały przypisane do tych samych klastrów. Sugeruje to, że obiekty reprezentujące te typy szkła charakteryzują się podobnymi profilami chemicznymi i są trudniejsze do rozdzielenia.
+Pozostałe klastry odpowiadają bardziej specyficznym grupom obiektów, jednak ich mniejsza liczebność oraz częściowe mieszanie się z innymi klasami wskazują, że nie tworzą one wyraźnie separowalnych struktur w przestrzeni analizowanych cech. 
+
+Wartość Adjusted Rand Index wyniosła `r round(ari_pam,3)`, co wskazuje na słabą zgodność pomiędzy klastrami PAM a rzeczywistymi klasami szkła. Wynik ten sugeruje, że rzeczywiste klasy w zbiorze Glass nie tworzą idealnie odseparowanych grup, część typów szkła może mieć bardzo podobny skład chemiczny.
+
+
+```{r heatmapa_profile_pam, echo=FALSE, fig.cap="Mapa ciepła średnich wartości składników chemicznych w klastrach PAM \\label{heatmap.profile}"}
+
+profile_heatmap <- profile_skupien_realne
+rownames(profile_heatmap) <- profile_heatmap$skupisko
+profile_heatmap <- profile_heatmap[, -1]
+profile_heatmap <- scale(profile_heatmap)
+pheatmap(
+  profile_heatmap,
+  cluster_rows = FALSE,
+  cluster_cols = TRUE,
+  main="Profile chemiczne klastrów PAM (wartości standaryzowane)"
+)
+```
+Na Rysunku \ref{heatmap.profile} przedstawiono mapę ciepła średnich, standaryzowanych wartości składników chemicznych dla klastrów uzyskanych metodą PAM. Zastosowanie standaryzacji pozwala na bezpośrednie porównanie względnych różnic między cechami. 
+Wizualizacja ta w czytelny sposób odzwierciedla unikalne profile chemiczne poszczególnych skupień:
+\begin{itemize}
+    \item \textbf{Klaster 1:} podwyższona zawartość sodu \textit{Na} oraz baru \textit{Ba}.
+    \item \textbf{Klaster 3:} podwyższone stężenie żelaza \textit{Fe}.
+    \item \textbf{Klaster 4:} podwyższony poziom wapnia \textit{Ca} oraz współczynnika załamania światła.
+    \item \textbf{Klaster 6:} podwyższona zawartość glinu \textit{Al} i potasu \textit{K}.
+\end{itemize}
+Z kolei klastry 2 i 5 posiadają najbardziej zbliżone profile, bez wyraźnej dominacji żadnego ze składników, co może tłumaczyć częściowe nakładanie się klas rzeczywistych w przestrzeni cech. 
+
+```{r wizualizacja_pca, echo=FALSE,  fig.cap = "Wizualizacja PCA klas rzeczywistych \\label{pca.pam}"}
+pca <- prcomp(
+  standaryzowane,
+  scale.=FALSE)
+
+pca_data <- data.frame(PC1 = pca$x[,1],
+  PC2 = pca$x[,2], Klasa = etykietki.rzeczywiste)
+
+library(ggplot2)
+
+ggplot(pca_data,
+  aes(PC1,PC2,color = Klasa)) +
+geom_point(size=3) +
+theme_minimal() +
+labs(title="Rozkład rzeczywistych klas szkła w przestrzeni PCA",
+  x="Pierwsza składowa główna",
+  y="Druga składowa główna")
+
+```
+Wizualizacja PCA przedstawiona na Rysunku \ref{pca.pam} pokazuje, że część klas szkła posiada wyraźne odseparowane obszary (np. 7), jednak wiele grup wykazuje znaczne nakładanie się. Wyjaśnia to ograniczoną wartość ARI uzyskaną dla algorytmu PAM, ponieważ podobne profile chemiczne utrudniają jednoznaczne rozdzielenie klas.
+
+
+## Końcowe wnioski
+
+```{r porownanie_clustering, echo=FALSE, results='asis'}
+ari_kmeans <- adjustedRandIndex(
+  etykietki.rzeczywiste,
+  kmeans.k$cluster)
+
+ari_agnes <- adjustedRandIndex(
+  etykietki.rzeczywiste,
+  agn.avg)
+
+sil_kmeans <- silhouette(
+  kmeans.k$cluster,
+  dist(standaryzowane))
+
+sil_pam <- silhouette(
+  pam.optymalny$clustering,
+  dist(standaryzowane))
+
+sil_agnes <- silhouette(
+  agn.avg,
+  dist(standaryzowane))
+
+
+wyniki <- data.frame(
+  Metoda=c("K-means","PAM","AGNES"),
+  ARI=c(ari_kmeans,ari_pam,ari_agnes),
+  silhouette=c(mean(sil_kmeans[,3]),
+               mean(sil_pam[,3]),
+               mean(sil_agnes[,3])))
+
+# tabela 
+por_ari_sil <- xtable(
+  wyniki,
+  caption = "Porównanie",
+  label = "tab.ari.sil",
+  digits = 3)
+
+print(por_ari_sil,
+      type = "latex",
+      table.placement = "H",
+      comment = FALSE,
+      include.rownames = FALSE)
+```
+
+Uzyskane wyniki przedstawione w Tabeli \ref{tab.ari.sil} pokazują, że dane Glass nie tworzą naturalnie separowalnych grup odpowiadających wszystkim rzeczywistym klasom szkła. Analiza wykazała, że struktura chemiczna danych Glass częściowo pokrywa się z rzeczywistymi klasami szkła, jednak nie pozwala na ich pełne odtworzenie metodami nienadzorowanymi. Najlepszą zgodność z rzeczywistymi etykietami uzyskał algorytm k-means (ARI=0.165), natomiast metoda AGNES oraz PAM osiągały wyższe wartości wskaźników oceny wewnętrznej, wskazując na lepszą zwartość i separację uzyskanych skupień. Otrzymane wyniki pokazują również, że wysoka jakość wewnętrzna klastrów nie musi oznaczać zgodności z rzeczywistą klasyfikacją. Algorytmy grupowania identyfikują podobieństwo chemiczne, które może jednak różnić się od klasyfikacji stworzonej na podstawie zastosowania szkła. 
